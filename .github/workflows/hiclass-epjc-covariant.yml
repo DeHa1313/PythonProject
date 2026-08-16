@@ -1,0 +1,125 @@
+name: hi_class EPJC exact covariant fR
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [cmb-class-validation]
+    paths:
+      - '.github/workflows/hiclass-epjc-covariant.yml'
+      - 'validation/hiclass/patch_epjc_fr_covariant.py'
+
+jobs:
+  exact-covariant:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential gfortran python3 python3-pip
+          python3 -m pip install --user --upgrade 'numpy<2' 'scipy<2' 'Cython<4'
+      - name: Clone patch build hi_class
+        run: |
+          git clone --depth 1 --branch hi_class https://github.com/miguelzuma/hi_class_public.git HICLASS
+          python3 validation/hiclass/patch_epjc_fr_covariant.py
+          cd HICLASS
+          make -j2
+      - name: Write GR and exact covariant inputs
+        working-directory: HICLASS
+        run: |
+          cat > gr.ini <<'EOF'
+          h = 0.674
+          omega_b = 0.02237
+          omega_cdm = 0.1200
+          N_ncdm = 0
+          N_ur = 3.046
+          A_s = 2.1e-9
+          n_s = 0.965
+          tau_reio = 0.054
+          Omega_smg = 0
+          output = tCl,pCl,lCl,mPk
+          lensing = yes
+          l_max_scalars = 2500
+          P_k_max_h/Mpc = 1.0
+          root = output/gr_
+          EOF
+          for RR in 1e6 1e7 1e8; do
+            cat > fr_${RR}.ini <<EOF
+          h = 0.674
+          omega_b = 0.02237
+          omega_cdm = 0.1200
+          N_ncdm = 0
+          N_ur = 3.046
+          A_s = 2.1e-9
+          n_s = 0.965
+          tau_reio = 0.054
+          Omega_Lambda = 0
+          Omega_fld = 0
+          Omega_smg = -1
+          gravity_model = epjc_fr_covariant
+          parameters_smg = 2.05, 1e-8, 1000, ${RR}
+          tuning_index_smg = 0
+          tuning_dxdy_guess_smg = 3.0
+          hubble_evolution = yes
+          hubble_friction = 3.0
+          method_qs_smg = automatic
+          pert_initial_conditions_smg = ext_field_attr
+          skip_stability_tests_smg = no
+          a_min_stability_test_smg = 1e-12
+          output_background_smg = 3
+          write_background = yes
+          output = tCl,pCl,lCl,mPk
+          lensing = yes
+          l_max_scalars = 2500
+          P_k_max_h/Mpc = 1.0
+          root = output/fr_${RR}_
+          EOF
+          done
+      - name: Run exact covariant backgrounds and spectra
+        working-directory: HICLASS
+        run: |
+          ./class gr.ini
+          for RR in 1e6 1e7 1e8; do
+            echo "=== RREG ${RR} ==="
+            ./class fr_${RR}.ini
+          done
+      - name: Compare spectra and regulator convergence
+        working-directory: HICLASS
+        run: |
+          mkdir -p ../validation/hiclass
+          python3 - <<'PY'
+          import numpy as np, json, glob
+          def ld(p): return np.loadtxt(p)
+          gr=ld('output/gr_00_cl_lensed.dat')
+          out={}
+          prev=None
+          for rr in ['1e6','1e7','1e8']:
+              mg=ld(f'output/fr_{rr}_00_cl_lensed.dat')
+              n=min(len(gr),len(mg)); ell=gr[:n,0].astype(int)
+              m=(ell>=30)&(ell<=2500)
+              d={}
+              for j,name in [(1,'TT'),(2,'EE'),(3,'TE')]:
+                  den=np.maximum(np.abs(gr[:n,j]),1e-30)
+                  rel=(mg[:n,j]-gr[:n,j])/den
+                  d[f'max_abs_frac_{name}']=float(np.max(np.abs(rel[m])))
+                  for L in [30,200,1000,2000]:
+                      i=np.argmin(abs(ell-L)); d[f'frac_{name}_ell{L}']=float(rel[i])
+              if prev is not None:
+                  n2=min(len(prev),len(mg)); e=mg[:n2,0].astype(int); mm=(e>=30)&(e<=2500)
+                  den=np.maximum(np.abs(prev[:n2,1]),1e-30)
+                  d['max_abs_frac_TT_vs_previous_reg']=float(np.max(np.abs((mg[:n2,1]-prev[:n2,1])/den)[mm]))
+              prev=mg
+              out[rr]=d
+          print(json.dumps(out,indent=2))
+          open('../validation/hiclass/covariant_spectrum_deltas.json','w').write(json.dumps(out,indent=2))
+          PY
+      - name: Upload outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hiclass-epjc-exact-covariant
+          path: |
+            HICLASS/output/gr_*
+            HICLASS/output/fr_*
+            HICLASS/fr_*.ini
+            validation/hiclass/covariant_spectrum_deltas.json
