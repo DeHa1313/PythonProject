@@ -1,0 +1,67 @@
+name: Planck PR4 native likelihood smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [cmb-class-validation]
+    paths:
+      - '.github/workflows/planck-pr4-likelihood-smoke.yml'
+      - 'validation/planck/**'
+
+jobs:
+  planck-pr4:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Python stack
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install 'numpy<2' 'scipy<2' cobaya
+      - name: Install native Planck likelihood data
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/cobaya_packages"
+          cobaya-install planck_2018_lowl.TT planck_2018_lowl.EE planck_NPIPE_highl_CamSpec.TTTEEE -p "$GITHUB_WORKSPACE/cobaya_packages" --skip-global
+      - name: Clone and install CLASS v3.3.4 Python wrapper
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential gfortran
+          git clone --depth 1 --branch v3.3.4 https://github.com/lesgourg/class_public.git CLASS
+          cd CLASS
+          make -j2
+          python3 -m pip install --no-build-isolation --force-reinstall --no-deps .
+      - name: Evaluate real Planck likelihood at fixed GR point
+        run: |
+          cat > validation/planck/planck_eval.yaml <<EOF
+          packages_path: $GITHUB_WORKSPACE/cobaya_packages
+          theory:
+            classy:
+              extra_args:
+                N_ncdm: 0
+                N_ur: 3.046
+                lensing: yes
+                l_max_scalars: 3000
+          likelihood:
+            planck_2018_lowl.TT: null
+            planck_2018_lowl.EE: null
+            planck_NPIPE_highl_CamSpec.TTTEEE: null
+          params:
+            H0: 67.4
+            omega_b: 0.02237
+            omega_cdm: 0.1200
+            A_s: 2.1e-9
+            n_s: 0.965
+            tau_reio: 0.054
+          sampler:
+            evaluate: null
+          output: validation/planck/gr_planck_eval
+          force: true
+          EOF
+          cobaya-run validation/planck/planck_eval.yaml
+      - name: Archive evaluation
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: planck-pr4-native-gr-evaluation
+          path: |
+            validation/planck/gr_planck_eval*
+            validation/planck/planck_eval.yaml
