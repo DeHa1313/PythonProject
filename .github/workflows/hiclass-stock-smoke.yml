@@ -1,0 +1,75 @@
+name: hi_class stock GR smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [cmb-class-validation]
+    paths:
+      - '.github/workflows/hiclass-stock-smoke.yml'
+      - 'validation/hiclass/**'
+
+jobs:
+  stock-hiclass:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential gfortran python3 python3-pip
+          python3 -m pip install --user --upgrade 'numpy<2' 'scipy<2' 'Cython<4'
+      - name: Clone hi_class
+        run: git clone --depth 1 --branch hi_class https://github.com/miguelzuma/hi_class_public.git HICLASS
+      - name: Build hi_class
+        working-directory: HICLASS
+        run: make -j2
+      - name: Run pure-GR spectrum with hi_class
+        working-directory: HICLASS
+        run: |
+          cat > gr_validation.ini <<'EOF'
+          h = 0.674
+          omega_b = 0.02237
+          omega_cdm = 0.1200
+          A_s = 2.1e-9
+          n_s = 0.965
+          tau_reio = 0.054
+          Omega_smg = 0
+          output = tCl,pCl,lCl,mPk
+          lensing = yes
+          l_max_scalars = 2500
+          P_k_max_h/Mpc = 1.0
+          root = output/higr_
+          write parameters = yes
+          EOF
+          ./class gr_validation.ini
+          test -s output/higr_00_cl_lensed.dat
+          test -s output/higr_00_pk.dat
+          head -5 output/higr_00_cl_lensed.dat
+      - name: Python wrapper GR smoke
+        working-directory: HICLASS
+        run: |
+          cd python
+          python3 setup.py build_ext --inplace
+          python3 - <<'PY'
+          import sys
+          sys.path.insert(0,'.')
+          from classy import Class
+          c=Class()
+          c.set({'h':0.674,'omega_b':0.02237,'omega_cdm':0.1200,'A_s':2.1e-9,'n_s':0.965,'tau_reio':0.054,'Omega_smg':0,'output':'tCl,pCl,lCl,mPk','lensing':'yes','l_max_scalars':2500,'P_k_max_h/Mpc':1.0})
+          c.compute()
+          cl=c.lensed_cl(2500)
+          print('hi_class_GR_TT200',float(cl['tt'][200]))
+          print('hi_class_GR_TT2500',float(cl['tt'][2500]))
+          print('hi_class_GR_sigma8',c.sigma8())
+          print('hi_class_GR_rs_drag',c.rs_drag())
+          assert cl['tt'][200]>0
+          c.struct_cleanup();c.empty()
+          PY
+      - name: Upload GR outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hiclass-stock-gr-smoke
+          path: |
+            HICLASS/output/higr_*
+            HICLASS/gr_validation.ini
