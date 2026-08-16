@@ -1,0 +1,54 @@
+name: CLASS stock v3.3.4 smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [cmb-class-validation]
+
+jobs:
+  stock-class:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout harness
+        uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential gfortran python3 python3-pip
+      - name: Clone CLASS v3.3.4
+        run: |
+          git clone --depth 1 --branch v3.3.4 https://github.com/lesgourg/class_public.git CLASS
+      - name: Build CLASS
+        working-directory: CLASS
+        run: |
+          make -j2
+      - name: Stock GR spectrum smoke test
+        working-directory: CLASS
+        run: |
+          ./class explanatory.ini
+          test -x ./class
+      - name: Python wrapper smoke test
+        working-directory: CLASS
+        run: |
+          python3 -m pip install .
+          python3 - <<'PY'
+          from classy import Class
+          cosmo=Class()
+          cosmo.set({'h':0.674,'omega_b':0.02237,'omega_cdm':0.1200,'A_s':2.1e-9,'n_s':0.965,'tau_reio':0.054,'output':'tCl,pCl,lCl,mPk','l_max_scalars':2500,'P_k_max_h/Mpc':1.0})
+          cosmo.compute()
+          cls=cosmo.lensed_cl(2500)
+          print('ell2500_tt', float(cls['tt'][2500]))
+          print('sigma8', cosmo.sigma8())
+          print('rs_drag', cosmo.rs_drag())
+          assert cls['tt'][200] > 0
+          assert cosmo.sigma8() > 0
+          cosmo.struct_cleanup(); cosmo.empty()
+          PY
+      - name: Save stock outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: class-stock-v334-smoke
+          path: |
+            CLASS/output/
+            CLASS/explanatory.ini
