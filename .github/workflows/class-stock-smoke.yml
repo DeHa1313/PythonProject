@@ -15,6 +15,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential gfortran python3 python3-pip
+          python3 -m pip install --user --upgrade 'numpy<2' 'Cython<4'
       - name: Clone CLASS v3.3.4
         run: |
           git clone --depth 1 --branch v3.3.4 https://github.com/lesgourg/class_public.git CLASS
@@ -30,13 +31,16 @@ jobs:
       - name: Python wrapper smoke test
         working-directory: CLASS
         run: |
-          python3 -m pip install .
+          python3 -m pip install --user --no-build-isolation --force-reinstall --no-deps .
           python3 - <<'PY'
+          import numpy as np
+          print('numpy',np.__version__)
           from classy import Class
           cosmo=Class()
           cosmo.set({'h':0.674,'omega_b':0.02237,'omega_cdm':0.1200,'A_s':2.1e-9,'n_s':0.965,'tau_reio':0.054,'output':'tCl,pCl,lCl,mPk','l_max_scalars':2500,'P_k_max_h/Mpc':1.0})
           cosmo.compute()
           cls=cosmo.lensed_cl(2500)
+          print('ell200_tt', float(cls['tt'][200]))
           print('ell2500_tt', float(cls['tt'][2500]))
           print('sigma8', cosmo.sigma8())
           print('rs_drag', cosmo.rs_drag())
