@@ -37,7 +37,7 @@ jobs:
           print('numpy',np.__version__,'scipy',scipy.__version__)
           from classy import Class
           cosmo=Class()
-          cosmo.set({'h':0.674,'omega_b':0.02237,'omega_cdm':0.1200,'A_s':2.1e-9,'n_s':0.965,'tau_reio':0.054,'output':'tCl,pCl,lCl,mPk','l_max_scalars':2500,'P_k_max_h/Mpc':1.0})
+          cosmo.set({'h':0.674,'omega_b':0.02237,'omega_cdm':0.1200,'A_s':2.1e-9,'n_s':0.965,'tau_reio':0.054,'output':'tCl,pCl,lCl,mPk','lensing':'yes','l_max_scalars':2500,'P_k_max_h/Mpc':1.0})
           cosmo.compute()
           cls=cosmo.lensed_cl(2500)
           print('ell200_tt', float(cls['tt'][200]))
