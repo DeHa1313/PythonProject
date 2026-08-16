@@ -16,7 +16,7 @@ jobs:
       - name: Install Python stack
         run: |
           python3 -m pip install --upgrade pip
-          python3 -m pip install 'numpy<2' 'scipy<2' cobaya
+          python3 -m pip install 'numpy<2' 'scipy<2' 'Cython<4' cobaya
       - name: Install native Planck likelihood data
         run: |
           mkdir -p "$GITHUB_WORKSPACE/cobaya_packages"
@@ -28,9 +28,13 @@ jobs:
           git clone --depth 1 --branch v3.3.4 https://github.com/lesgourg/class_public.git CLASS
           cd CLASS
           make -j2
-          python3 -m pip install --no-build-isolation --force-reinstall --no-deps .
+          python3 - <<'PY'
+          from classy import Class
+          print('classy import OK')
+          PY
       - name: Evaluate real Planck likelihood at fixed GR point
         run: |
+          mkdir -p validation/planck
           cat > validation/planck/planck_eval.yaml <<EOF
           packages_path: $GITHUB_WORKSPACE/cobaya_packages
           theory:
