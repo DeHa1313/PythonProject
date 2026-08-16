@@ -1,0 +1,140 @@
+name: hi_class EPJC curvature-screen spectra
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [cmb-class-validation]
+    paths:
+      - '.github/workflows/hiclass-epjc-screen.yml'
+      - 'validation/hiclass/**'
+
+jobs:
+  epjc-screen:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential gfortran python3 python3-pip
+          python3 -m pip install --user --upgrade 'numpy<2' 'scipy<2' 'Cython<4'
+      - name: Clone and patch hi_class
+        run: |
+          git clone --depth 1 --branch hi_class https://github.com/miguelzuma/hi_class_public.git HICLASS
+          python3 validation/hiclass/patch_epjc_screen.py
+      - name: Build patched hi_class
+        working-directory: HICLASS
+        run: make -j2
+      - name: Write validation inputs
+        working-directory: HICLASS
+        run: |
+          cat > gr.ini <<'EOF'
+          h = 0.674
+          omega_b = 0.02237
+          omega_cdm = 0.1200
+          N_ncdm = 0
+          A_s = 2.1e-9
+          n_s = 0.965
+          tau_reio = 0.054
+          Omega_smg = 0
+          output = tCl,pCl,lCl,mPk
+          lensing = yes
+          l_max_scalars = 2500
+          P_k_max_h/Mpc = 1.0
+          root = output/gr_
+          EOF
+          cat > mg_a1e8.ini <<'EOF'
+          h = 0.674
+          omega_b = 0.02237
+          omega_cdm = 0.1200
+          N_ncdm = 0
+          A_s = 2.1e-9
+          n_s = 0.965
+          tau_reio = 0.054
+          Omega_Lambda = 0
+          Omega_fld = 0
+          Omega_smg = -1
+          gravity_model = epjc_curvature_screen
+          parameters_smg = 1e-8, 0, 1000
+          expansion_model = lcdm
+          expansion_smg = 0.5
+          method_qs_smg = fully_dynamic
+          pert_initial_conditions_smg = ext_field_attr
+          skip_stability_tests_smg = no
+          output_background_smg = 3
+          output = tCl,pCl,lCl,mPk
+          lensing = yes
+          l_max_scalars = 2500
+          P_k_max_h/Mpc = 1.0
+          root = output/mg_a1e8_
+          EOF
+          cat > mg_a1e7_x2e7.ini <<'EOF'
+          h = 0.674
+          omega_b = 0.02237
+          omega_cdm = 0.1200
+          N_ncdm = 0
+          A_s = 2.1e-9
+          n_s = 0.965
+          tau_reio = 0.054
+          Omega_Lambda = 0
+          Omega_fld = 0
+          Omega_smg = -1
+          gravity_model = epjc_curvature_screen
+          parameters_smg = 1e-7, 2e-7, 1000
+          expansion_model = lcdm
+          expansion_smg = 0.5
+          method_qs_smg = fully_dynamic
+          pert_initial_conditions_smg = ext_field_attr
+          skip_stability_tests_smg = no
+          output_background_smg = 3
+          output = tCl,pCl,lCl,mPk
+          lensing = yes
+          l_max_scalars = 2500
+          P_k_max_h/Mpc = 1.0
+          root = output/mg_a1e7_x2e7_
+          EOF
+      - name: Run GR and modified spectra
+        working-directory: HICLASS
+        run: |
+          ./class gr.ini
+          ./class mg_a1e8.ini
+          ./class mg_a1e7_x2e7.ini
+      - name: Spectrum-level comparison
+        working-directory: HICLASS
+        run: |
+          python3 - <<'PY'
+          import numpy as np, json
+          def load(p): return np.loadtxt(p)
+          gr=load('output/gr_00_cl_lensed.dat')
+          pkgr=load('output/gr_00_pk.dat')
+          out={}
+          for tag in ['mg_a1e8','mg_a1e7_x2e7']:
+              mg=load(f'output/{tag}_00_cl_lensed.dat')
+              pk=load(f'output/{tag}_00_pk.dat')
+              # columns: ell, TT, EE, TE, BB, phiphi, Tphi, Ephi depending outputs
+              n=min(len(gr),len(mg)); ell=gr[:n,0].astype(int)
+              d={}
+              for j,name in [(1,'TT'),(2,'EE'),(3,'TE')]:
+                  den=np.maximum(np.abs(gr[:n,j]),1e-30)
+                  rel=np.abs((mg[:n,j]-gr[:n,j])/den)
+                  mask=(ell>=30)&(ell<=2500)
+                  d[f'max_abs_frac_{name}_ell30_2500']=float(np.max(rel[mask]))
+                  for L in [30,200,1000,2000]:
+                      i=np.argmin(np.abs(ell-L)); d[f'frac_{name}_ell{L}']=float((mg[i,j]-gr[i,j])/gr[i,j])
+              n2=min(len(pkgr),len(pk));
+              relpk=np.abs((pk[:n2,1]-pkgr[:n2,1])/np.maximum(np.abs(pkgr[:n2,1]),1e-30))
+              d['max_abs_frac_Pk']=float(np.max(relpk))
+              out[tag]=d
+          print(json.dumps(out,indent=2))
+          open('../validation/hiclass/spectrum_deltas.json','w').write(json.dumps(out,indent=2))
+          PY
+      - name: Upload modified spectra
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hiclass-epjc-curvature-screen
+          path: |
+            HICLASS/output/gr_*
+            HICLASS/output/mg_a1e8_*
+            HICLASS/output/mg_a1e7_x2e7_*
+            validation/hiclass/spectrum_deltas.json
